@@ -1,7 +1,6 @@
-# CAMBIO IMPORTANTE: Usamos 'aspnet' en lugar de 'runtime'
-# Esto es necesario porque convertimos el bot en un "Web Service" falso
+# CAMBIO: Usamos 'aspnet' en lugar de 'runtime'
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
-# --- NUEVO: Instalamos FFmpeg y librerías de audio ---
+# --- Instalamos FFmpeg y librerías de audio (Ya lo tenías bien) ---
 USER root
 RUN apt-get update && apt-get install -y ffmpeg libsodium23 libopus0
 USER app
@@ -13,13 +12,12 @@ ENV ASPNETCORE_URLS=http://+:8080
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
-# Copiamos el archivo de proyecto
 COPY ["DiscordBotTato.csproj", "."]
-# Restauramos dependencias (Aquí se descarga Discord.Net)
+
+# Restauramos dependencias
 RUN dotnet restore "./DiscordBotTato.csproj"
 COPY . .
 WORKDIR "/src/."
-# Compilamos
 RUN dotnet build "./DiscordBotTato.csproj" -c $BUILD_CONFIGURATION -o /app/build
 
 FROM build AS publish
@@ -29,4 +27,10 @@ RUN dotnet publish "./DiscordBotTato.csproj" -c $BUILD_CONFIGURATION -o /app/pub
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+
+# Sin esto, el bot no tiene permiso para crear "ranking.json"
+USER root
+RUN chown -R app:app /app
+USER app
+
 ENTRYPOINT ["dotnet", "DiscordBotTato.dll"]
