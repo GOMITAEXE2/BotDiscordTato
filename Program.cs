@@ -4,26 +4,19 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 
-// --- CONFIGURACIÓN DEL SERVIDOR WEB (TRUCO PARA RENDER) ---
+// --- SERVIDOR WEB FALSO (Para Render) ---
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
-
-// Render nos asignará un puerto dinámico en la variable "PORT".
-// Si no existe (en tu PC), usará el 8080.
 var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
-
-// Creamos una ruta simple para que el "ping" funcione
 app.MapGet("/", () => "El bot está funcionando 🤖");
-
-// Iniciamos el servidor web en segundo plano para no bloquear el bot
-// Escuchamos en 0.0.0.0 para que sea accesible desde fuera
 _ = app.RunAsync($"http://0.0.0.0:{port}");
 
-// --- AQUI EMPIEZA TU BOT DE SIEMPRE ---
+// --- CONFIGURACIÓN DEL BOT ---
+var token = Environment.GetEnvironmentVariable("DISCORD_TOKEN");
 
-// Variables de configuración
-var token = Environment.GetEnvironmentVariable("DISCORD_TOKEN") ?? "TOKEN_DE_COMPILADO";
-const ulong MI_SERVIDOR_ID = 123456789012345678; // <--- REEMPLAZA CON TU ID
+// AQUÍ ESTÁ EL SOSPECHOSO: Asegúrate que este número sea el correcto
+// Pero con este nuevo código, veremos en los logs cuál es el número real que ve el bot.
+const ulong MI_SERVIDOR_ID = 1008231468981555260; // <--- TU ID ACTUAL (Probablemente incorrecta)
 
 var config = new DiscordSocketConfig
 {
@@ -35,15 +28,11 @@ using var client = new DiscordSocketClient(config);
 client.Log += LogAsync;
 client.MessageReceived += HandleCommandAsync;
 
-// Iniciar el Bot
 await client.LoginAsync(TokenType.Bot, token);
 await client.StartAsync();
-
-// Mantenemos el proceso vivo (ahora dependemos del ciclo de vida del bot)
 await Task.Delay(-1);
 
-
-// --- LÓGICA DEL BOT ---
+// --- LÓGICA ---
 
 async Task HandleCommandAsync(SocketMessage messageParam)
 {
@@ -51,12 +40,28 @@ async Task HandleCommandAsync(SocketMessage messageParam)
     if (message.Author.IsBot) return;
     if (message.Channel is not SocketGuildChannel channel) return;
 
-    // Restricción de servidor
-    if (channel.Guild.Id != MI_SERVIDOR_ID) return;
+    // --- ZONA DE DIAGNÓSTICO ---
+    // Esto imprimirá en la consola de Render cada vez que escribas algo
+    Console.WriteLine($"[DEBUG] Mensaje recibido: '{message.Content}'");
+    Console.WriteLine($"[DEBUG] ID del Servidor actual: {channel.Guild.Id}");
+    Console.WriteLine($"[DEBUG] ID Configurada en código: {MI_SERVIDOR_ID}");
 
+    // Verificación de seguridad
+    if (channel.Guild.Id != MI_SERVIDOR_ID)
+    {
+        Console.WriteLine($"[BLOQUEO] El mensaje fue ignorado porque la ID no coincide.");
+        // TRUCO TEMPORAL: Descomenta la siguiente línea si quieres que funcione IGUAL aunque la ID esté mal
+        // return; 
+
+        // Por ahora, le diremos al bot que nos avise del error en Discord para que lo veas
+        await message.Channel.SendMessageAsync($"⚠ **Error de Configuración:**\nMi ID programada es `{MI_SERVIDOR_ID}`\nPero estoy en el servidor `{channel.Guild.Id}`\n¡Cambia la ID en el código!");
+        return;
+    }
+
+    // Comandos
     if (message.Content == "!hola")
     {
-        await message.Channel.SendMessageAsync($"¡Hola! Soy un bot web híbrido en Linux.");
+        await message.Channel.SendMessageAsync($"¡Hola {message.Author.Username}! ID Verificada ✅");
     }
 
     if (message.Content == "!jugar")
