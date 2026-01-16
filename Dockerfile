@@ -1,9 +1,12 @@
 # CAMBIO IMPORTANTE: Usamos 'aspnet' en lugar de 'runtime'
 # Esto es necesario porque convertimos el bot en un "Web Service" falso
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
+# --- NUEVO: Instalamos FFmpeg y librerías de audio ---
+USER root
+RUN apt-get update && apt-get install -y ffmpeg libsodium23 libopus0
 USER app
+# -----------------------------------------------------
 WORKDIR /app
-# Configuración vital para Render: definimos el puerto 8080
 EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
 
