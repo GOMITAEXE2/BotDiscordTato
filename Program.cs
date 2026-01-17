@@ -18,21 +18,27 @@ public class Program
 
     public async Task MainAsync(string[] args)
     {
-        // 1. Servidor Web Falso (Para que Render no duerma al bot)
         var builder = WebApplication.CreateBuilder(args);
         var app = builder.Build();
-        app.MapGet("/", () => "TatoBot: Modo RAM y ID Correcta 🟢");
+        app.MapGet("/", () => "TatoBot v3.1: Fix Ambiguity 🟢");
         _ = app.RunAsync($"http://0.0.0.0:{Environment.GetEnvironmentVariable("PORT") ?? "8080"}");
 
-        // 2. Configuración
         var config = new DiscordSocketConfig
         {
             GatewayIntents = GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent,
-            AlwaysDownloadUsers = true
+            AlwaysDownloadUsers = true,
+            LogLevel = LogSeverity.Debug
         };
 
         _client = new DiscordSocketClient(config);
-        _interactions = new InteractionService(_client.Rest);
+
+        var interactionConfig = new InteractionServiceConfig
+        {
+            LogLevel = LogSeverity.Debug,
+            DefaultRunMode = Discord.Interactions.RunMode.Async
+        };
+
+        _interactions = new InteractionService(_client.Rest, interactionConfig);
 
         _services = new ServiceCollection()
             .AddSingleton(_client)
@@ -52,15 +58,14 @@ public class Program
 
     private async Task ReadyAsync()
     {
-        Console.WriteLine($"[BOT] Conectado como {_client.CurrentUser.Username}");
+        Console.WriteLine($"[CONECTADO] {_client.CurrentUser.Username}");
         try
         {
             await _interactions.AddModulesAsync(Assembly.GetEntryAssembly(), _services);
-            // Registramos los comandos DIRECTAMENTE en tu servidor
             await _interactions.RegisterCommandsToGuildAsync(MI_SERVIDOR_ID);
-            Console.WriteLine($"[EXITO] Comandos registrados en el servidor {MI_SERVIDOR_ID}");
+            Console.WriteLine($"[OK] Comandos registrados en servidor: {MI_SERVIDOR_ID}");
         }
-        catch (Exception ex) { Console.WriteLine($"[ERROR FATAL] {ex.Message}"); }
+        catch (Exception ex) { Console.WriteLine($"[ERROR REGISTRO] {ex.Message}"); }
     }
 
     private async Task HandleInteractionAsync(SocketInteraction interaction)
@@ -68,27 +73,31 @@ public class Program
         try
         {
             var ctx = new SocketInteractionContext(_client, interaction);
-            await _interactions.ExecuteCommandAsync(ctx, _services);
+            var result = await _interactions.ExecuteCommandAsync(ctx, _services);
+
+            if (!result.IsSuccess)
+            {
+                Console.WriteLine($"[ERROR INTERACCIÓN] {result.ErrorReason}");
+                if (interaction.Type == InteractionType.MessageComponent)
+                {
+                    await interaction.RespondAsync($"⚠ **Error interno:** {result.ErrorReason}", ephemeral: true);
+                }
+            }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[ERROR INTERACCION] {ex}");
-            if (interaction.Type == InteractionType.MessageComponent)
-            {
-                await interaction.RespondAsync($"🔥 **Error:** {ex.Message}", ephemeral: true);
-            }
+            Console.WriteLine($"[CRASH] {ex}");
+            if (interaction.HasResponded)
+                await interaction.FollowupAsync($"🔥 Crash: {ex.Message}", ephemeral: true);
+            else
+                await interaction.RespondAsync($"🔥 Crash: {ex.Message}", ephemeral: true);
         }
     }
 
     private async Task HandleTextCommandAsync(SocketMessage arg)
     {
         if (arg is not SocketUserMessage message || message.Author.IsBot) return;
-
-        // Atajo: t!jugar abre el panel igual que /jugar
-        if (message.Content == "t!jugar")
-        {
-            await new GameModule().EnviarPanelJuego(message.Channel, message.Author.Id);
-        }
+        if (message.Content == "t!jugar") await new GameModule().EnviarPanelJuego(message.Channel, message.Author.Id);
     }
 
     private Task LogAsync(LogMessage msg)
@@ -98,7 +107,7 @@ public class Program
     }
 }
 
-// --- MÓDULO DE JUEGO ---
+// --- MÓDULO DEL JUEGO ---
 public class GameModule : InteractionModuleBase<SocketInteractionContext>
 {
     [SlashCommand("jugar", "Panel de juegos")]
@@ -112,22 +121,26 @@ public class GameModule : InteractionModuleBase<SocketInteractionContext>
         var wins = RankingEnMemoria.GetWins(userId);
 
         var embed = new EmbedBuilder()
-            .WithTitle("🎰 Casino TatoBot")
-            .WithDescription("¡Prueba tu suerte!")
-            .WithColor(Color.Green)
+            .WithTitle("🎰 Casino TatoBot 🎰")
+            .WithDescription("¡Haz clic abajo!")
+            .WithColor(Color.Blue)
             .AddField("Tus Victorias", $"{wins} 🏆", true);
 
+        // Botones con IDs 
         var builder = new ComponentBuilder()
-            .WithButton("Tirar Dados", "juego_dados", ButtonStyle.Primary, new Emoji("🎲"))
-            .WithButton("Ranking (RAM)", "ver_ranking", ButtonStyle.Secondary, new Emoji("📜"));
+            .WithButton("Tirar Dados", "btn_dados", ButtonStyle.Primary, new Emoji("🎲"))
+            .WithButton("Ranking", "btn_ranking", ButtonStyle.Secondary, new Emoji("📜"));
 
         if (isSlash) await RespondAsync(embed: embed.Build(), components: builder.Build());
         else await channel.SendMessageAsync(embed: embed.Build(), components: builder.Build());
     }
 
-    [ComponentInteraction("juego_dados")]
+    [ComponentInteraction("btn_dados")]
     public async Task BotonDados()
     {
+        // 1. AVISO INMEDIATO
+        await DeferAsync();
+
         var rnd = new Random();
         int u = rnd.Next(1, 7);
         int b = rnd.Next(1, 7);
@@ -141,19 +154,22 @@ public class GameModule : InteractionModuleBase<SocketInteractionContext>
         else if (u < b) resultado = "Perdiste... 💩";
         else resultado = "Empate 🤝";
 
-        await RespondAsync($"🎲 Tú: {u} | Bot: {b} -> **{resultado}**");
+        // 2. RESPUESTA TARDÍA
+        await FollowupAsync($"🎲 Tú: {u} | Bot: {b} -> **{resultado}**");
     }
 
-    [ComponentInteraction("ver_ranking")]
+    [ComponentInteraction("btn_ranking")]
     public async Task BotonRanking()
     {
+        await DeferAsync(ephemeral: true);
+
         var top = RankingEnMemoria.GetTop();
         string lista = top.Count > 0 ? string.Join("\n", top) : "Nadie ha ganado aún.";
-        await RespondAsync($"🏆 **Top Ganadores (Sesión Actual):**\n{lista}", ephemeral: true);
+
+        await FollowupAsync($"🏆 **Top Ganadores:**\n{lista}", ephemeral: true);
     }
 }
 
-// --- SISTEMA DE RANKING EN MEMORIA (No falla por permisos) ---
 public static class RankingEnMemoria
 {
     private static Dictionary<ulong, int> _victorias = new();
@@ -163,14 +179,6 @@ public static class RankingEnMemoria
         if (!_victorias.ContainsKey(id)) _victorias[id] = 0;
         _victorias[id]++;
     }
-
     public static int GetWins(ulong id) => _victorias.ContainsKey(id) ? _victorias[id] : 0;
-
-    public static List<string> GetTop()
-    {
-        return _victorias.OrderByDescending(x => x.Value)
-                         .Take(5)
-                         .Select(x => $"<@{x.Key}>: {x.Value}")
-                         .ToList();
-    }
+    public static List<string> GetTop() => _victorias.OrderByDescending(x => x.Value).Take(5).Select(x => $"<@{x.Key}>: {x.Value}").ToList();
 }
